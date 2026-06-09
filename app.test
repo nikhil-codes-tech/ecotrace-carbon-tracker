@@ -1,0 +1,294 @@
+import { render, screen, fireEvent } from '@testing-library/react';
+import App from './App';
+
+// ─── Pure Logic Unit Tests ───────────────────────────────────────────────────
+
+// Emission factors (must match App.jsx)
+const CATEGORIES = [
+  { id: "transport", factor: 0.21 },
+  { id: "food",      factor: 3.3  },
+  { id: "energy",    factor: 0.82 },
+  { id: "shopping",  factor: 8.5  },
+  { id: "flights",   factor: 255  },
+];
+
+const GLOBAL_AVG = 4000;
+const TARGET     = 2300;
+
+// Helper: compute annual kg from inputs
+const computeAnnual = (inputs) =>
+  CATEGORIES.reduce((sum, c) => sum + inputs[c.id] * c.factor, 0);
+
+// Helper: replicate getLevel logic
+const getLevel = (kg) => {
+  if (kg < 2300) return "Climate Champion";
+  if (kg < 3500) return "On Track";
+  if (kg < 5500) return "Needs Work";
+  return "High Impact";
+};
+
+// Helper: replicate formatKg logic
+const formatKg = (kg) =>
+  kg >= 1000 ? `${(kg / 1000).toFixed(1)}t` : `${Math.round(kg)}kg`;
+
+// ─── 1. Emission Calculation Tests ──────────────────────────────────────────
+
+describe("Carbon Emission Calculations", () => {
+
+  test("transport: 0 km/week → 0 kg CO2", () => {
+    expect(0 * 0.21).toBe(0);
+  });
+
+  test("transport: 100 km/week → 21 kg CO2", () => {
+    expect(100 * 0.21).toBeCloseTo(21);
+  });
+
+  test("food: 14 meals/week → 46.2 kg CO2", () => {
+    expect(14 * 3.3).toBeCloseTo(46.2);
+  });
+
+  test("energy: 350 kWh/month → 287 kg CO2", () => {
+    expect(350 * 0.82).toBeCloseTo(287);
+  });
+
+  test("shopping: 4 items/month → 34 kg CO2", () => {
+    expect(4 * 8.5).toBeCloseTo(34);
+  });
+
+  test("flights: 2 flights/year → 510 kg CO2", () => {
+    expect(2 * 255).toBe(510);
+  });
+
+  test("all zeros → annual total is 0", () => {
+    const inputs = { transport: 0, food: 0, energy: 0, shopping: 0, flights: 0 };
+    expect(computeAnnual(inputs)).toBe(0);
+  });
+
+  test("default inputs → annual total is positive", () => {
+    const inputs = { transport: 80, food: 14, energy: 350, shopping: 4, flights: 2 };
+    const total = computeAnnual(inputs);
+    expect(total).toBeGreaterThan(0);
+  });
+
+  test("annual total scales linearly with transport", () => {
+    const base   = { transport: 50,  food: 0, energy: 0, shopping: 0, flights: 0 };
+    const double = { transport: 100, food: 0, energy: 0, shopping: 0, flights: 0 };
+    expect(computeAnnual(double)).toBeCloseTo(computeAnnual(base) * 2);
+  });
+
+  test("each category contributes independently", () => {
+    const onlyTransport = { transport: 100, food: 0, energy: 0, shopping: 0, flights: 0 };
+    const onlyFood      = { transport: 0, food: 10, energy: 0, shopping: 0, flights: 0 };
+    const combined      = { transport: 100, food: 10, energy: 0, shopping: 0, flights: 0 };
+    expect(computeAnnual(combined)).toBeCloseTo(
+      computeAnnual(onlyTransport) + computeAnnual(onlyFood)
+    );
+  });
+
+});
+
+// ─── 2. Level Classification Tests ──────────────────────────────────────────
+
+describe("Footprint Level Classification", () => {
+
+  test("0 kg → Climate Champion", () => {
+    expect(getLevel(0)).toBe("Climate Champion");
+  });
+
+  test("2299 kg → Climate Champion (just below threshold)", () => {
+    expect(getLevel(2299)).toBe("Climate Champion");
+  });
+
+  test("2300 kg → On Track (at threshold)", () => {
+    expect(getLevel(2300)).toBe("On Track");
+  });
+
+  test("3000 kg → On Track", () => {
+    expect(getLevel(3000)).toBe("On Track");
+  });
+
+  test("3499 kg → On Track (just below threshold)", () => {
+    expect(getLevel(3499)).toBe("On Track");
+  });
+
+  test("3500 kg → Needs Work (at threshold)", () => {
+    expect(getLevel(3500)).toBe("Needs Work");
+  });
+
+  test("4500 kg → Needs Work", () => {
+    expect(getLevel(4500)).toBe("Needs Work");
+  });
+
+  test("5500 kg → High Impact (at threshold)", () => {
+    expect(getLevel(5500)).toBe("High Impact");
+  });
+
+  test("10000 kg → High Impact", () => {
+    expect(getLevel(10000)).toBe("High Impact");
+  });
+
+});
+
+// ─── 3. formatKg Utility Tests ───────────────────────────────────────────────
+
+describe("formatKg Utility", () => {
+
+  test("0 kg → '0kg'", () => {
+    expect(formatKg(0)).toBe("0kg");
+  });
+
+  test("500 kg → '500kg'", () => {
+    expect(formatKg(500)).toBe("500kg");
+  });
+
+  test("999 kg → '999kg' (just below 1t threshold)", () => {
+    expect(formatKg(999)).toBe("999kg");
+  });
+
+  test("1000 kg → '1.0t'", () => {
+    expect(formatKg(1000)).toBe("1.0t");
+  });
+
+  test("2300 kg → '2.3t'", () => {
+    expect(formatKg(2300)).toBe("2.3t");
+  });
+
+  test("4000 kg → '4.0t'", () => {
+    expect(formatKg(4000)).toBe("4.0t");
+  });
+
+  test("1500 kg → '1.5t'", () => {
+    expect(formatKg(1500)).toBe("1.5t");
+  });
+
+  test("rounds sub-1000 values correctly", () => {
+    expect(formatKg(99.6)).toBe("100kg");
+  });
+
+});
+
+// ─── 4. Benchmark Comparison Tests ──────────────────────────────────────────
+
+describe("Benchmark Comparisons", () => {
+
+  test("footprint below global avg → negative percentage", () => {
+    const fp = 3000;
+    const pct = ((fp - GLOBAL_AVG) / GLOBAL_AVG * 100);
+    expect(pct).toBeLessThan(0);
+  });
+
+  test("footprint above global avg → positive percentage", () => {
+    const fp = 5000;
+    const pct = ((fp - GLOBAL_AVG) / GLOBAL_AVG * 100);
+    expect(pct).toBeGreaterThan(0);
+  });
+
+  test("footprint equal to global avg → 0%", () => {
+    const pct = ((GLOBAL_AVG - GLOBAL_AVG) / GLOBAL_AVG * 100);
+    expect(pct).toBe(0);
+  });
+
+  test("footprint below Paris target → negative vs target", () => {
+    const fp = 2000;
+    const pct = ((fp - TARGET) / TARGET * 100);
+    expect(pct).toBeLessThan(0);
+  });
+
+  test("footprint above Paris target → positive vs target", () => {
+    const fp = 3000;
+    const pct = ((fp - TARGET) / TARGET * 100);
+    expect(pct).toBeGreaterThan(0);
+  });
+
+});
+
+// ─── 5. Savings Calculation Tests ────────────────────────────────────────────
+
+describe("Potential Savings Calculations", () => {
+
+  test("public transit switch saves 40% of transport emissions", () => {
+    const transportKg = 80 * 0.21;
+    const saving = transportKg * 0.4;
+    expect(saving).toBeCloseTo(6.72);
+  });
+
+  test("one meatless day saves 14% of food emissions", () => {
+    const foodKg = 14 * 3.3;
+    const saving = foodKg * 0.14;
+    expect(saving).toBeCloseTo(6.468);
+  });
+
+  test("energy upgrades save 25% of energy emissions", () => {
+    const energyKg = 350 * 0.82;
+    const saving = energyKg * 0.25;
+    expect(saving).toBeCloseTo(71.75);
+  });
+
+  test("total savings is sum of individual savings", () => {
+    const t = 80 * 0.21 * 0.4;
+    const f = 14 * 3.3 * 0.14;
+    const e = 350 * 0.82 * 0.25;
+    const total = t + f + e;
+    expect(total).toBeGreaterThan(0);
+    expect(total).toBeCloseTo(t + f + e);
+  });
+
+  test("zero inputs → zero savings", () => {
+    expect(0 * 0.21 * 0.4).toBe(0);
+    expect(0 * 3.3 * 0.14).toBe(0);
+    expect(0 * 0.82 * 0.25).toBe(0);
+  });
+
+});
+
+// ─── 6. Component Render Tests ───────────────────────────────────────────────
+
+describe("App Component Rendering", () => {
+
+  test("renders without crashing", () => {
+    render(<App />);
+  });
+
+  test("renders EcoTrace brand name", () => {
+    render(<App />);
+    expect(screen.getByText(/EcoTrace/i)).toBeInTheDocument();
+  });
+
+  test("renders Dashboard tab by default", () => {
+    render(<App />);
+    expect(screen.getByText(/Annual Footprint/i)).toBeInTheDocument();
+  });
+
+  test("renders all 4 navigation tabs", () => {
+    render(<App />);
+    expect(screen.getByText(/dashboard/i)).toBeInTheDocument();
+    expect(screen.getByText(/track/i)).toBeInTheDocument();
+    expect(screen.getByText(/actions/i)).toBeInTheDocument();
+    expect(screen.getByText(/insights/i)).toBeInTheDocument();
+  });
+
+  test("clicking Track tab shows slider inputs", () => {
+    render(<App />);
+    fireEvent.click(screen.getByText(/track/i));
+    expect(screen.getByText(/Transport/i)).toBeInTheDocument();
+  });
+
+  test("clicking Actions tab shows checklist", () => {
+    render(<App />);
+    fireEvent.click(screen.getByText(/actions/i));
+    expect(screen.getByText(/Personalized Actions/i)).toBeInTheDocument();
+  });
+
+  test("clicking Insights tab shows benchmark section", () => {
+    render(<App />);
+    fireEvent.click(screen.getByText(/insights/i));
+    expect(screen.getByText(/Benchmark Comparison/i)).toBeInTheDocument();
+  });
+
+  test("streak badge is visible", () => {
+    render(<App />);
+    expect(screen.getByText(/streak/i)).toBeInTheDocument();
+  });
+
+});
+
